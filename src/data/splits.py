@@ -44,7 +44,6 @@ def scaffold_split(dataset, frac_train=0.8, frac_valid=0.1, frac_test=0.1):
     for i in range(len(dataset)):
         data = dataset[i]
 
-        # Get smiles from Data object
         smiles = None
         if hasattr(data, "smiles"):
             smiles = data.smiles

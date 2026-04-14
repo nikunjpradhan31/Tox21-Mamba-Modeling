@@ -12,9 +12,9 @@ class Tox21Dataset(InMemoryDataset):
     """
 
     def __init__(
-        self, root="data/Tox21", transform=None, pre_transform=None, pre_filter=None
+        self, root="tox21.csv", transform=None, pre_transform=None, pre_filter=None
     ):
-        self.csv_path = "tox21.csv"  
+        self.csv_path = root 
 
         if pre_transform is None:
             pre_transform = MolFeaturizer()
@@ -92,9 +92,7 @@ class Tox21Dataset(InMemoryDataset):
         torch.save((data, slices), self.processed_paths[0])
 
 
-def get_tox21_dataset(root="data/Tox21"):
-    """
-    Utility function to load the custom featurized Tox21 dataset.
-    """
+def get_tox21_dataset(root="tox21.csv"):
+
     dataset = Tox21Dataset(root=root)
     return dataset

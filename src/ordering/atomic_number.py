@@ -12,7 +12,6 @@ def get_order(data, descending=False, **kwargs):
     if hasattr(data, "z") and data.z is not None:
         z = data.z.to(torch.float64)
     else:
-        # Fallback to the first feature if z is not directly available
         z = data.x[:, 0].to(torch.float64)
 
     # Add a small amount of random noise to break ties consistently

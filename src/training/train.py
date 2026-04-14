@@ -29,7 +29,6 @@ def train_epoch(
     num_batches = len(dataloader)
 
     for batch in dataloader:
-        # Extract inputs and labels robustly
         if hasattr(batch, "y") and hasattr(batch, "x"):
             # PyTorch Geometric Batch object
             labels = batch.y.to(device)
@@ -64,13 +63,10 @@ def train_epoch(
 
         # Create mask for valid labels (non-NaN)
         valid_mask = ~torch.isnan(labels)
-
         # Replace NaNs in labels with 0 to safely compute loss
         safe_labels = torch.where(valid_mask, labels, torch.zeros_like(labels))
-
         # Compute element-wise loss
         loss_matrix = criterion(logits, safe_labels)
-
         # Apply mask and compute mean loss over valid elements
         masked_loss = loss_matrix[valid_mask]
 
@@ -79,7 +75,6 @@ def train_epoch(
         else:
             loss = torch.tensor(0.0, device=device, requires_grad=True)
 
-        # Backpropagation
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
