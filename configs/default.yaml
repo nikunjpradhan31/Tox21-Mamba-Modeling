@@ -1,12 +1,20 @@
 data:
   root: "data/"
+<<<<<<< HEAD
   batch_size: 4
+=======
+  batch_size: 8
+>>>>>>> refs/remotes/origin/main
 model:
   d_model: 128
   gin_layers: 3
   mamba_layers: 2
   dropout: 0.1
 training:
+<<<<<<< HEAD
   epochs: 1
+=======
+  epochs: 5
+>>>>>>> refs/remotes/origin/main
   lr: 0.001
   weight_decay: 1e-5
