@@ -1,9 +1,9 @@
+import math
 import torch
 from torch_geometric.data import Data
 from rdkit import Chem
+from rdkit.Chem import AllChem, Crippen
 
-
-from rdkit import Chem
 
 def one_hot_encoding(x, allowable_set):
     if x not in allowable_set:
@@ -11,7 +11,7 @@ def one_hot_encoding(x, allowable_set):
     return [int(x == s) for s in allowable_set]
 
 
-def get_node_features(atom):
+def get_node_features(atom, gasteiger=0.0, logp=0.0, mr=0.0):
     # --- Atomic number (bucketed instead of raw) ---
     atomic_num = one_hot_encoding(
         atom.GetAtomicNum(),
@@ -48,6 +48,10 @@ def get_node_features(atom):
     )
 
     radical = [atom.GetNumRadicalElectrons()]
+    
+    # --- Electronic properties ---
+    electronic = [gasteiger, logp, mr]
+    
     features = (
         atomic_num +
         degree +
@@ -57,7 +61,8 @@ def get_node_features(atom):
         aromatic +
         in_ring +
         chirality +
-        radical
+        radical +
+        electronic
     )
     return list(map(float, features))
 
@@ -130,10 +135,30 @@ class MolFeaturizer:
 
         num_nodes = mol.GetNumAtoms()
 
+        # Compute electronic and structural descriptors globally for the molecule
+        try:
+            Chem.rdPartialCharges.ComputeGasteigerCharges(mol)
+        except:
+            pass
+            
+        try:
+            contribs = Crippen._GetAtomContribs(mol)
+        except:
+            contribs = [(0.0, 0.0)] * num_nodes
+
         node_features = []
         z = []
-        for atom in mol.GetAtoms():
-            node_features.append(get_node_features(atom))
+        for i, atom in enumerate(mol.GetAtoms()):
+            try:
+                gasteiger = float(atom.GetProp('_GasteigerCharge'))
+                if math.isnan(gasteiger) or math.isinf(gasteiger):
+                    gasteiger = 0.0
+            except:
+                gasteiger = 0.0
+                
+            logp, mr = contribs[i] if i < len(contribs) else (0.0, 0.0)
+            
+            node_features.append(get_node_features(atom, gasteiger, logp, mr))
             z.append(atom.GetAtomicNum())
 
         edge_indices = []
@@ -160,9 +185,15 @@ class MolFeaturizer:
         else:
             edge_index = torch.empty((2, 0), dtype=torch.long)
             edge_attr = torch.empty((0, 9), dtype=torch.float)
-            edge_attr = torch.empty((0, 9), dtype=torch.float)
 
-        data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, z=z_tensor)
+        # Global Morgan Fingerprint
+        try:
+            fp = AllChem.GetMorganFingerprintAsBitVect(mol, 2, nBits=1024)
+            fp_tensor = torch.tensor(list(fp), dtype=torch.float).unsqueeze(0)
+        except:
+            fp_tensor = torch.zeros((1, 1024), dtype=torch.float)
+
+        data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, z=z_tensor, fp=fp_tensor)
 
         if y is not None:
             data.y = y
