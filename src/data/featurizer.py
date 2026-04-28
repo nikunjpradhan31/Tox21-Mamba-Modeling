@@ -2,7 +2,8 @@ import math
 import torch
 from torch_geometric.data import Data
 from rdkit import Chem
-from rdkit.Chem import AllChem, Crippen
+from rdkit.Chem import Crippen
+from rdkit.Chem import rdFingerprintGenerator
 
 
 def one_hot_encoding(x, allowable_set):
@@ -188,7 +189,12 @@ class MolFeaturizer:
 
         # Global Morgan Fingerprint
         try:
-            fp = AllChem.GetMorganFingerprintAsBitVect(mol, 2, nBits=1024)
+            morgan_gen = rdFingerprintGenerator.GetMorganGenerator(
+            radius=2,
+            fpSize=1024
+        )
+
+            fp = morgan_gen.GetFingerprint(mol)
             fp_tensor = torch.tensor(list(fp), dtype=torch.float).unsqueeze(0)
         except:
             fp_tensor = torch.zeros((1, 1024), dtype=torch.float)
