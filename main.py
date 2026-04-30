@@ -142,6 +142,8 @@ def main():
         node_features=dataset.num_node_features,
         d_model=config["model"]["d_model"],
         gin_layers=config["model"]["gin_layers"],
+        mamba_state=config["model"]["mamba_state"],
+        mamba_conv=config["model"]["mamba_conv"],
         mamba_layers=mamba_layers,
         dropout=config["model"]["dropout"],
         num_tasks=dataset.num_tasks,

@@ -53,9 +53,13 @@ class GINMambaHybrid(nn.Module):
         # KAN Dynamic Mixture to fuse local (GNN) and global (Mamba) features
         self.kdm = KANDynamicMixture(d_model)
 
-        # MLP head for task predictions (d_model + 1024 for Morgan Fingerprints)
+        # MLP head for task predictions (d_model + val for Morgan Fingerprints)
+        MLP_in_channels = 2
+        if mamba_layers == 0:
+            MLP_in_channels = 1
+
         self.mlp = MLPHead(
-            in_channels=d_model,
+            in_channels=d_model * MLP_in_channels ,
             hidden_channels=mlp_hidden,
             out_channels=num_tasks,
             num_layers=mlp_layers,
@@ -76,8 +80,12 @@ class GINMambaHybrid(nn.Module):
         # Capture strictly local pooled features BEFORE serialization
         pooled_local = global_mean_pool(h, batch)
 
+        if len(self.mamba_layers) == 0: #GINE Only
+            logits = self.mlp(pooled_local)
+            return logits
+
         # 2. Reordering
-        perm_output = ordering_func(data, descending=True)
+        perm_output = ordering_func(data, descending=False)
         if isinstance(perm_output, tuple):
             perm, scores = perm_output
             # Soft gating to allow gradient flow to learned ordering module
@@ -105,19 +113,6 @@ class GINMambaHybrid(nn.Module):
         # 6. KAN Dynamic Mixture (Fusion)
         fused = self.kdm(pooled_local, pooled_global)
 
-        # 7. Knowledge Graph / Global Topological Injection (Morgan Fingerprints)
-        # if hasattr(data, 'fp') and data.fp is not None:
-        #     fp = data.fp
-        #     # PyG batching stacked them as (batch_size, 1, 1024). We need (batch_size, 1024)
-        #     if fp.dim() == 3 and fp.size(1) == 1:
-        #         fp = fp.squeeze(1)
-        #     elif fp.dim() == 1:
-        #         fp = fp.unsqueeze(0)
-        #     fused = torch.cat([fused, fp], dim=-1)
-        # else:
-        #     fp_dummy = torch.zeros(fused.size(0), 1024, device=fused.device)
-        #     fused = torch.cat([fused, fp_dummy], dim=-1)
-
-        # 8. Classification
+        # 7. Classification
         logits = self.mlp(fused)
         return logits

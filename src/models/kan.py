@@ -38,7 +38,7 @@ class KANDynamicMixture(nn.Module):
     def __init__(self, d_model: int):
         super().__init__()
         # Takes [local, global] concatenated -> d_model
-        self.kan = KANLayer(d_model * 2, d_model)
+        self.kan = KANLayer(d_model * 2, d_model*2)
         
     def forward(self, local_feat: torch.Tensor, global_feat: torch.Tensor) -> torch.Tensor:
         # Concatenate features along feature dimension

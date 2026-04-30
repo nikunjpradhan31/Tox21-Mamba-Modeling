@@ -187,21 +187,9 @@ class MolFeaturizer:
             edge_index = torch.empty((2, 0), dtype=torch.long)
             edge_attr = torch.empty((0, 9), dtype=torch.float)
 
-        # # Global Morgan Fingerprint
-        # try:
-        #     morgan_gen = rdFingerprintGenerator.GetMorganGenerator(
-        #     radius=2,
-        #     fpSize=1024
-        # )
 
-        #     fp = morgan_gen.GetFingerprint(mol)
-        #     fp_tensor = torch.tensor(list(fp), dtype=torch.float).unsqueeze(0)
-        # except:
-        #     fp_tensor = torch.zeros((1, 1024), dtype=torch.float)
 
-        data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, z=z_tensor,
-                     #fp=fp_tensor
-                     )
+        data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, z=z_tensor)
 
         if y is not None:
             data.y = y
