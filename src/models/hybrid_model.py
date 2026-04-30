@@ -6,6 +6,7 @@ from typing import Callable, Any
 
 from .gin import GINEncoder
 from .mamba_model import MambaBlock
+from .bidirectional_mamba import BiMambaBlock, create_bidirectional_mamba_layers
 from .mlp_head import MLPHead
 from .kan import KANDynamicMixture
 
@@ -17,10 +18,11 @@ class GINMambaHybrid(nn.Module):
         d_model: int,
         gin_hidden: int = 64,
         gin_layers: int = 3,
-        mamba_state: int = 16,
+        mamba_state:int = 16,
         mamba_conv: int = 4,
         mamba_expand: int = 2,
         mamba_layers: int = 1,
+        bidirectional: bool = False,  # New parameter for bidirectional Mamba
         mlp_hidden: int = 64,
         mlp_layers: int = 2,
         num_tasks: int = 12,
@@ -38,17 +40,26 @@ class GINMambaHybrid(nn.Module):
         )
 
         # Mamba layers for sequence modeling
-        self.mamba_layers = nn.ModuleList(
-            [
-                MambaBlock(
-                    d_model=d_model,
-                    d_state=mamba_state,
-                    d_conv=mamba_conv,
-                    expand=mamba_expand,
-                )
-                for _ in range(mamba_layers)
-            ]
-        )
+        if bidirectional and mamba_layers > 0:
+            self.mamba_layers = create_bidirectional_mamba_layers(
+                d_model=d_model,
+                d_state=mamba_state,
+                d_conv=mamba_conv,
+                expand=mamba_expand,
+                num_layers=mamba_layers
+            )
+        else:
+            self.mamba_layers = nn.ModuleList(
+                [
+                    MambaBlock(
+                        d_model=d_model,
+                        d_state=mamba_state,
+                        d_conv=mamba_conv,
+                        expand=mamba_expand,
+                    )
+                    for _ in range(mamba_layers)
+                ]
+            )
 
         # KAN Dynamic Mixture to fuse local (GNN) and global (Mamba) features
         self.kdm = KANDynamicMixture(d_model)
@@ -81,6 +92,7 @@ class GINMambaHybrid(nn.Module):
         pooled_local = global_mean_pool(h, batch)
 
         if len(self.mamba_layers) == 0: #GINE Only
+            # Use pooled_local directly for GIN-only mode
             logits = self.mlp(pooled_local)
             return logits
 

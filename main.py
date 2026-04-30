@@ -20,6 +20,7 @@ from src.ordering.random import get_order as random_order
 from src.ordering.atomic_number import get_order as atomic_number_order
 from src.ordering.electronegativity import get_order as electronegativity_order
 from src.ordering.degree import get_order as degree_order
+from src.ordering.canonical import get_order as canonical_order
 from src.ordering.learned import LearnedOrdering
 
 
@@ -65,7 +66,7 @@ def main():
         "--ordering",
         type=str,
         default="atomic_number",
-        choices=["random", "atomic_number", "electronegativity", "degree", "learned"],
+        choices=["random", "atomic_number", "electronegativity", "degree", "canonical", "learned"],
         help="Node ordering strategy",
     )
     parser.add_argument(
@@ -126,6 +127,8 @@ def main():
         ordering_func = electronegativity_order
     elif args.ordering == "degree":
         ordering_func = degree_order
+    elif args.ordering == "canonical":
+        ordering_func = canonical_order
     elif args.ordering == "learned":
         ordering_func = LearnedOrdering(dataset.num_node_features).to(device)
     else:
@@ -145,6 +148,7 @@ def main():
         mamba_state=config["model"]["mamba_state"],
         mamba_conv=config["model"]["mamba_conv"],
         mamba_layers=mamba_layers,
+        bidirectional=config["model"].get("bidirectional", False),
         dropout=config["model"]["dropout"],
         num_tasks=dataset.num_tasks,
     )
@@ -170,6 +174,10 @@ def main():
     criterion = nn.BCEWithLogitsLoss(reduction="none", pos_weight=pos_weight)
 
     best_val_roc_auc = -1.0
+    best_val_f1_score = -1.0
+    best_val_loss = float('inf')
+    patience_counter = 0
+    patience = 15
     best_model_path = (
         f"outputs/checkpoints/best_model_{args.model_type}_{args.ordering}.pt"
     )
@@ -184,17 +192,41 @@ def main():
 
         val_roc_auc = val_metrics.get("roc_auc", 0.0)
         val_f1_score = val_metrics.get("f1_score", 0.0)
+        val_f1_optimal = val_metrics.get("f1_score_optimal", val_f1_score)
 
         logger.info(
-            f"Epoch {epoch:03d} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val ROC-AUC: {val_roc_auc:.4f} | Val F1-Score: {val_f1_score:.4f}"
+            f"Epoch {epoch:03d} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val ROC-AUC: {val_roc_auc:.4f} | Val F1-Score: {val_f1_score:.4f} | Val F1-Optimal: {val_f1_optimal:.4f}"
         )
 
-        if val_roc_auc > best_val_roc_auc:
+        # Early stopping and model checkpointing based on multiple metrics
+        improvement = False
+        
+        # Check ROC-AUC improvement
+        if val_roc_auc > best_val_roc_auc + 0.001:  # 0.1% improvement threshold
             best_val_roc_auc = val_roc_auc
+            improvement = True
+        
+        # Check F1-score improvement
+        if val_f1_optimal > best_val_f1_score + 0.005:  # 0.5% improvement threshold
+            best_val_f1_score = val_f1_optimal
+            improvement = True
+        
+        # Check loss improvement
+        if val_loss < best_val_loss - 0.001:  # 0.1% improvement threshold
+            best_val_loss = val_loss
+            improvement = True
+
+        if improvement:
+            patience_counter = 0
             torch.save(model.state_dict(), best_model_path)
             logger.info(
-                f"-> Saved new best model with Val ROC-AUC: {best_val_roc_auc:.4f}"
+                f"-> Saved new best model with Val ROC-AUC: {best_val_roc_auc:.4f}, F1-Optimal: {best_val_f1_score:.4f}"
             )
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                logger.info(f"Early stopping triggered at epoch {epoch} after {patience} epochs without improvement")
+                break
 
     # Load best model for testing
     logger.info("Evaluating best model on test set...")

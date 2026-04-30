@@ -4,6 +4,7 @@ from torch.utils.data import DataLoader
 from typing import Tuple, Dict, Any
 
 from src.training.metrics import compute_metrics
+from src.training.threshold_optimization import find_optimal_threshold_per_task, apply_thresholds_to_predictions
 
 
 @torch.no_grad()
@@ -83,6 +84,17 @@ def evaluate(
     probs = torch.sigmoid(all_logits)
 
     # Compute metrics (ignores NaNs)
+    # Find optimal thresholds on validation set
+    optimal_thresholds, optimal_f1_scores = find_optimal_threshold_per_task(all_labels, probs)
+    
+    # Apply optimal thresholds for F1-score calculation
+    binary_preds = apply_thresholds_to_predictions(probs, optimal_thresholds)
+    
     metrics = compute_metrics(all_labels, probs)
+    
+    # Compute F1 with optimal thresholds
+    metrics_f1_optimal = compute_metrics(all_labels, binary_preds)
+    metrics["f1_score_optimal"] = metrics_f1_optimal["f1_score"]
+    metrics["optimal_thresholds"] = optimal_thresholds.tolist()
 
     return avg_loss, metrics

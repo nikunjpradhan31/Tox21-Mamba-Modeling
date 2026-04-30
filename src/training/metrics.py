@@ -51,9 +51,14 @@ def compute_metrics(y_true, y_pred):
             roc_auc = roc_auc_score(valid_y_true, valid_y_pred)
             prc_auc = average_precision_score(valid_y_true, valid_y_pred)
 
-            # Use 0.5 threshold for F1-score (assuming y_pred are probabilities)
-            valid_y_pred_binary = (valid_y_pred >= 0.5).astype(int)
-            f1 = f1_score(valid_y_true, valid_y_pred_binary, zero_division=0)
+            # Use input as binary predictions if they appear to be binary (0/1 values)
+            if np.all(np.isin(valid_y_pred, [0, 1])):
+                # Input is already binary predictions
+                f1 = f1_score(valid_y_true, valid_y_pred, zero_division=0)
+            else:
+                # Input is probabilities, use 0.5 threshold
+                valid_y_pred_binary = (valid_y_pred >= 0.5).astype(int)
+                f1 = f1_score(valid_y_true, valid_y_pred_binary, zero_division=0)
 
             roc_aucs.append(roc_auc)
             prc_aucs.append(prc_auc)
