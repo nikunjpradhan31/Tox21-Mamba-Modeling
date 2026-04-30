@@ -18,11 +18,11 @@ class GINMambaHybrid(nn.Module):
         d_model: int,
         gin_hidden: int = 64,
         gin_layers: int = 3,
-        mamba_state:int = 16,
+        mamba_state: int = 16,
         mamba_conv: int = 4,
         mamba_expand: int = 2,
         mamba_layers: int = 1,
-        bidirectional: bool = False,  # New parameter for bidirectional Mamba
+        bidirectional: bool = False,
         mlp_hidden: int = 64,
         mlp_layers: int = 2,
         num_tasks: int = 12,
@@ -30,7 +30,6 @@ class GINMambaHybrid(nn.Module):
     ):
         super().__init__()
 
-        # GIN encoder for local graph structure
         self.gin = GINEncoder(
             in_channels=node_features,
             hidden_channels=gin_hidden,
@@ -39,14 +38,13 @@ class GINMambaHybrid(nn.Module):
             dropout=dropout,
         )
 
-        # Mamba layers for sequence modeling
         if bidirectional and mamba_layers > 0:
             self.mamba_layers = create_bidirectional_mamba_layers(
                 d_model=d_model,
                 d_state=mamba_state,
                 d_conv=mamba_conv,
                 expand=mamba_expand,
-                num_layers=mamba_layers
+                num_layers=mamba_layers,
             )
         else:
             self.mamba_layers = nn.ModuleList(
@@ -61,70 +59,51 @@ class GINMambaHybrid(nn.Module):
                 ]
             )
 
-        # KAN Dynamic Mixture to fuse local (GNN) and global (Mamba) features
         self.kdm = KANDynamicMixture(d_model)
 
-        # MLP head for task predictions (d_model + val for Morgan Fingerprints)
-        MLP_in_channels = 2
-        if mamba_layers == 0:
-            MLP_in_channels = 1
-
         self.mlp = MLPHead(
-            in_channels=d_model * MLP_in_channels ,
+            in_channels=d_model,
             hidden_channels=mlp_hidden,
             out_channels=num_tasks,
             num_layers=mlp_layers,
             dropout=dropout,
         )
 
-    def forward(self, data: Any, ordering_func: Callable) -> torch.Tensor:
-        """
-        data: PyG Batch object
-        ordering_func: Callable that takes 'data' and returns a node permutation tensor
-        """
+    def encode_atoms(self, data: Any, ordering_func: Callable) -> torch.Tensor:
         x, edge_index, batch = data.x, data.edge_index, data.batch
-        edge_attr = getattr(data, 'edge_attr', None)
+        edge_attr = getattr(data, "edge_attr", None)
 
-        # 1. Local graph encoding (GIN + Edge features + JK)
         h = self.gin(x, edge_index, edge_attr=edge_attr)
-        
-        # Capture strictly local pooled features BEFORE serialization
-        pooled_local = global_mean_pool(h, batch)
 
-        if len(self.mamba_layers) == 0: #GINE Only
-            # Use pooled_local directly for GIN-only mode
-            logits = self.mlp(pooled_local)
-            return logits
+        if len(self.mamba_layers) == 0:
+            return h
 
-        # 2. Reordering
         perm_output = ordering_func(data, descending=False)
         if isinstance(perm_output, tuple):
             perm, scores = perm_output
-            # Soft gating to allow gradient flow to learned ordering module
             h = h * scores.unsqueeze(-1)
         else:
             perm = perm_output
 
-        h = h[perm]
+        inv_perm = torch.argsort(perm)
+
+        h_ordered = h[perm]
         batch_perm = batch[perm]
+        dense_x, mask = to_dense_batch(h_ordered, batch_perm)
 
-        # 3. Form sequences (to dense batch)
-        dense_x, mask = to_dense_batch(h, batch_perm)
-
-        # 4. Mamba sequence modeling
         for mamba_layer in self.mamba_layers:
             dense_x = mamba_layer(dense_x)
 
-        # 5. Masked mean pooling over the sequence (global features)
-        # mask shape: (batch_size, max_seq_len)
-        mask_float = mask.float().unsqueeze(-1)  # (batch_size, max_seq_len, 1)
-        pooled_global = (dense_x * mask_float).sum(dim=1) / mask_float.sum(dim=1).clamp(
-            min=1e-9
-        )
+        mask_expanded = mask.unsqueeze(-1).expand_as(dense_x)
+        h_mamba_ordered = dense_x[mask_expanded].view(-1, dense_x.size(-1))
 
-        # 6. KAN Dynamic Mixture (Fusion)
-        fused = self.kdm(pooled_local, pooled_global)
+        h_mamba = h_mamba_ordered[inv_perm]
 
-        # 7. Classification
-        logits = self.mlp(fused)
+        h_fused = self.kdm(h, h_mamba)
+        return h_fused
+
+    def forward(self, data: Any, ordering_func: Callable) -> torch.Tensor:
+        h_fused = self.encode_atoms(data, ordering_func)
+        pooled = global_mean_pool(h_fused, data.batch)
+        logits = self.mlp(pooled)
         return logits

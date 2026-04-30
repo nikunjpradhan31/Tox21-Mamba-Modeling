@@ -1,0 +1,22 @@
+data:
+  batch_size: 64
+  max_molecules: 50000
+
+model:
+  d_model: 64
+  gin_hidden: 64
+  gin_layers: 3
+  mamba_state: 8
+  mamba_conv: 4
+  mamba_expand: 2
+  mamba_layers: 1
+  bidirectional: true
+  rwse_walk_length: 16
+  dropout: 0.4
+
+training:
+  epochs: 100
+  lr: 0.001
+  weight_decay: 0.01
+  esf_weight: 0.1
+  mask_ratio: 0.15

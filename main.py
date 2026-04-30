@@ -11,6 +11,7 @@ from torch_geometric.loader import DataLoader
 
 from src.utils.seed import set_seed
 from src.data.tox21_dataset import Tox21Dataset
+from src.data.featurizer import MolFeaturizer
 from src.data.splits import scaffold_split
 from src.models.hybrid_model import GINMambaHybrid
 from src.training.train import train_epoch
@@ -41,12 +42,11 @@ def setup_logger(ordering):
 
     logger = logging.getLogger()
     logger.setLevel(logging.INFO)
+    if logger.hasHandlers():
+        logger.handlers.clear()
 
-    # File handler
     fh = logging.FileHandler(log_filename)
     fh.setLevel(logging.INFO)
-
-    # Console handler
     ch = logging.StreamHandler(sys.stdout)
     ch.setLevel(logging.INFO)
 
@@ -58,6 +58,34 @@ def setup_logger(ordering):
     logger.addHandler(ch)
 
     return logger
+
+
+def load_pretrained_weights(model, pretrained_path, logger):
+    logger.info(f"Loading pretrained weights from {pretrained_path}")
+    state_dict = torch.load(pretrained_path, map_location="cpu", weights_only=True)
+
+    pretrained_prefix = "hybrid."
+    matched_state = {}
+    skipped = []
+    for key, value in state_dict.items():
+        if key.startswith(pretrained_prefix):
+            new_key = key[len(pretrained_prefix):]
+            matched_state[new_key] = value
+        elif key in ("recon_head", "esf_head", "mask_token") or key.startswith("recon_head.") or key.startswith("esf_head.") or key.startswith("mask_token"):
+            skipped.append(key)
+        elif key in model.state_dict():
+            matched_state[key] = value
+        else:
+            skipped.append(key)
+
+    missing, unexpected = model.load_state_dict(matched_state, strict=False)
+    if missing:
+        logger.info(f"Missing keys (will be randomly initialized): {missing}")
+    if unexpected:
+        logger.info(f"Unexpected keys (ignored): {unexpected}")
+
+    logger.info(f"Loaded {len(matched_state)} parameters; skipped {len(skipped)} pretraining-only keys")
+    return model
 
 
 def main():
@@ -81,32 +109,35 @@ def main():
     parser.add_argument(
         "--config", type=str, default="configs/default.yaml", help="Path to config file"
     )
+    parser.add_argument(
+        "--pretrained",
+        type=str,
+        default=None,
+        help="Path to pretrained model checkpoint",
+    )
 
     args = parser.parse_args()
 
-    # Setup directories
     os.makedirs("outputs/checkpoints", exist_ok=True)
     os.makedirs("outputs/results", exist_ok=True)
 
     logger = setup_logger(args.ordering)
     logger.info(f"Arguments: {args}")
 
-    # Load config
     with open(args.config, "r") as f:
         config = yaml.safe_load(f)
     logger.info(f"Config: {config}")
 
-    # Set seed
     set_seed(args.seed)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     logger.info(f"Using device: {device}")
 
-    # Load dataset
+    rwse_walk_length = config.get("model", {}).get("rwse_walk_length", 16)
+
     logger.info("Loading dataset...")
     dataset = Tox21Dataset(root=config["data"]["root"])
 
-    # Create splits
     train_subset, val_subset, test_subset = scaffold_split(dataset)
 
     batch_size = config["data"]["batch_size"]
@@ -140,7 +171,6 @@ def main():
         mamba_layers = 0
         logger.info("Using standalone GIN baseline (mamba_layers=0)")
 
-    # Initialize model
     base_model = GINMambaHybrid(
         node_features=dataset.num_node_features,
         d_model=config["model"]["d_model"],
@@ -153,17 +183,21 @@ def main():
         num_tasks=dataset.num_tasks,
     )
 
+    pretrained_path = args.pretrained or config.get("model", {}).get("pretrained_path")
+    if pretrained_path and os.path.exists(pretrained_path):
+        base_model = load_pretrained_weights(base_model, pretrained_path, logger)
+
     model = ModelWrapper(base_model, ordering_func).to(device)
 
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=float(config["training"]["lr"]),
         weight_decay=float(config["training"]["weight_decay"]),
-        fused=torch.cuda.is_available()
+        fused=torch.cuda.is_available(),
     )
 
     logger.info("Computing pos_weight for BCE loss...")
-    y_all = torch.cat([data.y for data in train_subset], dim=0) # shape (N, 12)
+    y_all = torch.cat([data.y for data in train_subset], dim=0)
     valid_mask = ~torch.isnan(y_all)
     pos_counts = ((y_all == 1) & valid_mask).sum(dim=0)
     neg_counts = ((y_all == 0) & valid_mask).sum(dim=0)
@@ -175,14 +209,13 @@ def main():
 
     best_val_roc_auc = -1.0
     best_val_f1_score = -1.0
-    best_val_loss = float('inf')
+    best_val_loss = float("inf")
     patience_counter = 0
     patience = 15
     best_model_path = (
         f"outputs/checkpoints/best_model_{args.model_type}_{args.ordering}.pt"
     )
-    
-    # Use command line epochs if provided, otherwise use config
+
     epochs = args.epochs if args.epochs is not None else config["training"]["epochs"]
 
     logger.info("Starting training...")
@@ -197,7 +230,7 @@ def main():
         logger.info(
             f"Epoch {epoch:03d} | Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f} | Val ROC-AUC: {val_roc_auc:.4f} | Val F1-Score: {val_f1_score:.4f} | Val F1-Optimal: {val_f1_optimal:.4f}"
         )
-
+        
         # Early stopping and model checkpointing based on multiple metrics
         improvement = False
         
@@ -228,7 +261,6 @@ def main():
                 logger.info(f"Early stopping triggered at epoch {epoch} after {patience} epochs without improvement")
                 break
 
-    # Load best model for testing
     logger.info("Evaluating best model on test set...")
     model.load_state_dict(
         torch.load(best_model_path, map_location=device, weights_only=True)
@@ -243,7 +275,6 @@ def main():
         f"Test Loss: {test_loss:.4f} | Test ROC-AUC: {test_roc_auc:.4f} | Test PRC-AUC: {test_prc_auc:.4f} | Test F1-Score: {test_f1_score:.4f}"
     )
 
-    # Write results to JSON
     results = {
         "model_type": args.model_type,
         "ordering": args.ordering,

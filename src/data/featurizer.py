@@ -1,9 +1,23 @@
 import math
 import torch
 from torch_geometric.data import Data
+from torch_geometric.utils import to_dense_adj
 from rdkit import Chem
 from rdkit.Chem import Crippen
 from rdkit.Chem import rdFingerprintGenerator
+
+
+def compute_rwse(edge_index, num_nodes, walk_length=16):
+    adj = to_dense_adj(edge_index, max_num_nodes=num_nodes).squeeze(0)
+    deg = adj.sum(dim=1, keepdim=True).clamp(min=1)
+    dag = adj.float() / deg
+    rwse = []
+    cur = torch.eye(num_nodes, device=edge_index.device)
+    for k in range(1, walk_length + 1):
+        cur = cur @ dag
+        diag = cur.diagonal()
+        rwse.append(diag / k)
+    return torch.stack(rwse, dim=1)
 
 
 def one_hot_encoding(x, allowable_set):
@@ -109,8 +123,11 @@ def get_edge_features(bond):
 class MolFeaturizer:
     """
     Callable class to convert an RDKit molecule or a PyG Data object with SMILES
-    into a PyG Data object with custom featurization.
+    into a PyG Data object with custom featurization + RWSE.
     """
+
+    def __init__(self, rwse_walk_length: int = 16):
+        self.rwse_walk_length = rwse_walk_length
 
     def __call__(self, data_or_mol):
         # Handle PyG Data object with SMILES
@@ -187,9 +204,11 @@ class MolFeaturizer:
             edge_index = torch.empty((2, 0), dtype=torch.long)
             edge_attr = torch.empty((0, 9), dtype=torch.float)
 
+        rwse = compute_rwse(edge_index, num_nodes, self.rwse_walk_length)
 
+        x = torch.cat([x, rwse], dim=1)
 
-        data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, z=z_tensor)
+        data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, z=z_tensor, rwse=rwse)
 
         if y is not None:
             data.y = y

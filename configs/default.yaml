@@ -9,6 +9,9 @@ model:
   mamba_state: 8
   bidirectional: true
   dropout: 0.4
+  rwse_walk_length: 16
+  kan_gate: true
+  pretrained_path: null
 training:
   epochs: 50
   lr: 0.001
