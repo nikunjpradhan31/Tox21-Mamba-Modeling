@@ -1,5 +1,5 @@
 import torch
-from torch.utils.data import Subset
+from torch.utils.data import Subset, random_split
 from rdkit import Chem
 from rdkit.Chem.Scaffolds import MurckoScaffold
 from collections import defaultdict
@@ -85,3 +85,17 @@ def scaffold_split(dataset, frac_train=0.8, frac_valid=0.1, frac_test=0.1):
         Subset(dataset, valid_idx),
         Subset(dataset, test_idx),
     )
+
+
+
+def random_split_dataset(dataset, frac_train=0.8, frac_valid=0.1, frac_test=0.1, seed=42):
+    assert abs(frac_train + frac_valid + frac_test - 1.0) < 1e-5
+
+    n = len(dataset)
+    n_train = int(frac_train * n)
+    n_valid = int(frac_valid * n)
+    n_test = n - n_train - n_valid
+
+    generator = torch.Generator().manual_seed(seed)
+
+    return random_split(dataset, [n_train, n_valid, n_test], generator=generator)

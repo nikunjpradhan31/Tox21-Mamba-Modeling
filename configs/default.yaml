@@ -3,18 +3,19 @@ data:
   batch_size: 64
 model:
   d_model: 64
-  gin_layers: 3
-  mamba_layers: 1
+  gin_layers: 4
+  gin_hidden: 128
+  mamba_layers: 2
   mamba_conv: 4
-  mamba_state: 16
-  bidirectional: false
-  dropout: 0.4
+  mamba_state: 32
+  bidirectional: true
+  dropout: 0.2
   rwse_walk_length: 16
   kan_gate: true
   pretrained_path: null
 training:
   epochs: 50
-  lr: 0.003
+  lr: 0.001
   weight_decay: 0.01
 
 

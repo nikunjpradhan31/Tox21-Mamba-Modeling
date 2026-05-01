@@ -12,7 +12,7 @@ from torch_geometric.loader import DataLoader
 from src.utils.seed import set_seed
 from src.data.tox21_dataset import Tox21Dataset
 from src.data.featurizer import MolFeaturizer
-from src.data.splits import scaffold_split
+from src.data.splits import scaffold_split, random_split_dataset
 from src.models.hybrid_model import GINMambaHybrid
 from src.training.train import train_epoch
 from src.training.eval import evaluate
@@ -138,7 +138,7 @@ def main():
     logger.info("Loading dataset...")
     dataset = Tox21Dataset(root=config["data"]["root"], rwse_walk_length=rwse_walk_length)
 
-    train_subset, val_subset, test_subset = scaffold_split(dataset)
+    train_subset, val_subset, test_subset = random_split_dataset(dataset)
 
     batch_size = config["data"]["batch_size"]
     train_loader = DataLoader(train_subset, batch_size=batch_size, shuffle=True, pin_memory=True)
@@ -174,6 +174,7 @@ def main():
     base_model = GINMambaHybrid(
         node_features=dataset.num_node_features,
         d_model=config["model"]["d_model"],
+        gin_hidden=config["model"].get("gin_hidden", 64),
         gin_layers=config["model"]["gin_layers"],
         mamba_state=config["model"]["mamba_state"],
         mamba_conv=config["model"]["mamba_conv"],
